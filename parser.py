@@ -15,6 +15,7 @@ class PlayersFetcher:
         'Lipiński Marek': 'Marek Lipiński',
         'Ronkiewicz Łukasz': 'Łukasz Ronkiewicz',
         'Damian Pierikarz': 'Damian Piernikarz',
+        'Jacek Godyn': 'Jacek Godyń',
     }
 
     @staticmethod
@@ -170,7 +171,8 @@ class Runner:
 
     def __init__(self, path, custom_sheet=None, clean=False):
         workbook = xlrd.open_workbook(path)
-        self.sheets = workbook.sheets() if not custom_sheet else [workbook.sheet_by_name(custom_sheet)]
+        self.sheets = workbook.sheets() if (not custom_sheet or len(custom_sheet) == 0) \
+            else [workbook.sheet_by_name(custom_sheet)]
         self.driver = GraphDatabase.driver('bolt://localhost:7687', auth=basic_auth('neo4j', 'Welcome01'))
         session = self.driver.session()
         if clean:
@@ -192,6 +194,6 @@ class Runner:
         return count
 
 
-runner = Runner(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else None)
+runner = Runner(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else None, sys.argv[3] if len(sys.argv) > 3 else False)
 total = runner.run(2017 if '2017' in sys.argv[1] else 2016)
 print('>> created {} relationships'.format(total))
