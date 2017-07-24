@@ -29,19 +29,22 @@ class MatrixParser:
     def handles(self, name):
         if 'wolna' in name:
             return False
+        return 'grupa' in name or ('masters' in name and 0 == name.index('masters')) or 'dywizja a' in name
 
-        return 'grupa' in name or ('masters' in name and 0 == name.index('masters'))
-
-    def parse(self, sheet, session):
+    def parse(self, year, sheet, session):
         count = 0
-        sheet_name = sheet.name if sheet.name not in self.SHEET_NAME_FIXES else self.SHEET_NAME_FIXES[sheet.name]
-        group_month = sheet_name.lower().replace('grupa', '').strip()
-        print(group_month)
-        if len(group_month.split()) == 1:
-            group_month += ' luty' if sheet_name.lower() == 'masters' else ' styczeń'
+        if 'dywizja' in sheet.name.lower():
+            round = sheet.name.split()[1]
+            group = 'A'
+        else:
+            sheet_name = sheet.name if sheet.name not in self.SHEET_NAME_FIXES else self.SHEET_NAME_FIXES[sheet.name]
+            group_month = sheet_name.lower().replace('grupa', '').strip()
+            print(group_month)
+            if len(group_month.split()) == 1:
+                group_month += ' luty' if sheet_name.lower() == 'masters' else ' styczeń'
 
-        group, month = group_month.split()
-        month_no = self.MONTHS.index(month)
+            group, month = group_month.split()
+            round = self.MONTHS.index(month)
         print('>> ' + sheet.name)
         players = []
         for row in range(2, sheet.nrows):
@@ -70,7 +73,7 @@ class MatrixParser:
                         continue
 
                     opponent = players[col - 1][1]
-                    print('>> Group: {}, month: {} | {} ({}) {}'.format(group, month, player, score, opponent))
+                    print('>> Group: {}, round: {} | {} ({}) {}'.format(group, round, player, score, opponent))
                     try:
                         player_sets, opponent_sets = score.split('x')
                         relationship = 'win' if player_sets > opponent_sets else 'lose'
@@ -78,11 +81,12 @@ class MatrixParser:
                         if score in ['walk+', 'walk-']:
                             relationship = 'win' if score == 'walk+' else 'lose'
                         else:
-                            raise Exception('Unknown score {} for players {} {}', score, player, opponent)
+                            print('Unknown score {} for players {} {}', score, player, opponent)
+                            continue
                     query = """
                             MATCH(n:Player {{name: '{}'}}), (m:Player {{name: '{}'}})
-                            CREATE UNIQUE(n)-[:{} {{score: '{}', group: '{}', month: '{}', month_no: {}}}]->(m)
-                        """.format(player, opponent, relationship, score, group, month, month_no)
+                            CREATE UNIQUE(n)-[:{} {{score: '{}', group: '{}', round: '{}', year: {}}}]->(m)
+                        """.format(player, opponent, relationship, score, group, round, year)
                     try:
                         session.run(query)
                         count += 1
@@ -110,13 +114,13 @@ class Runner:
 
         session.run('CREATE CONSTRAINT ON (player:Player) ASSERT player.name IS UNIQUE')
 
-    def run(self):
+    def run(self, year):
         count = 0
         for sheet in sheets:
             for parser in self.parsers:
                 if parser.handles(sheet.name.lower()):
                     session = self.driver.session()
-                    count += parser.parse(sheet, session)
+                    count += parser.parse(year, sheet, session)
                     try:
                         session.close()
                     except ConstraintError as e:
@@ -124,6 +128,6 @@ class Runner:
         return count
 
 
-runner = Runner(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else None, True)
-count = runner.run()
+runner = Runner(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else None)
+count = runner.run(2017 if '2017' in sys.argv[1] else 2016)
 print('>> created {} relationships'.format(count))
