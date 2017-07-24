@@ -5,8 +5,96 @@ import xlrd
 from neo4j.v1 import GraphDatabase, basic_auth
 from neo4j.exceptions import ConstraintError
 
-wb = xlrd.open_workbook(sys.argv[1])
-sheets = wb.sheets() if len(sys.argv) == 2 else [wb.sheet_by_name(sys.argv[2])]
+
+class PlayersFetcher:
+    PLAYER_FIXES = {
+        'Kowalski Piotr': 'Piotr Kowalski',
+        'Katarzyna Błach': 'Katarzyna Mazur',
+        'Nazarov Konstiantyn': 'Konstiantyn Nazarov',
+        'Wycisło Wojtek': 'Wojtek Wycisło',
+        'Lipiński Marek': 'Marek Lipiński',
+        'Ronkiewicz Łukasz': 'Łukasz Ronkiewicz',
+        'Damian Pierikarz': 'Damian Piernikarz',
+    }
+
+    @staticmethod
+    def get_surname(player):
+        player = re.sub(r'[0-9\.\(\)\-]', ' ', player).strip()
+        player = ' '.join(player.split()[0:2])  # only 2 first words
+        player = player if player not in PlayersFetcher.PLAYER_FIXES else PlayersFetcher.PLAYER_FIXES[player]
+        if ' ' in player:
+            player = player.split()[1]
+
+        return player[0].upper() + player[1:]
+
+    @staticmethod
+    def fetch_players(session, sheet, start=2, offset=0):
+        players = []
+        for row in range(start, sheet.nrows):
+            if sheet.cell(row, offset).value == '':
+                break
+            if 'JUMP' in sheet.cell(row, offset).value:
+                continue
+
+            player = PlayersFetcher.get_surname(sheet.cell(row, offset).value)
+            players.append((row, player))
+
+            try:
+                session.run("CREATE({}:Player {{name: '{}'}})".format(player.replace(' ', ''), player))
+            except ConstraintError:
+                pass
+        return players
+
+
+class FlatParser:
+    MAX_MATCHES = 17
+
+    def handles(self, name):
+        return 'dywizja b' in name
+
+    def parse(self, year, sheet, session):
+        count = 0
+        round = sheet.name.replace('.', '').split()[1]
+
+        print('>> ' + sheet.name)
+        players = PlayersFetcher.fetch_players(session, sheet, offset=1, start=4)
+
+        for row, player in players:
+            for col in range(3, self.MAX_MATCHES * 3, 3):
+                try:
+                    if len(sheet.cell(row, col).value.strip()) == 0:
+                        break
+
+                    opponent = PlayersFetcher.get_surname(sheet.cell(row, col).value)
+                    score = str(sheet.cell(row, col + 1).value).lower()
+                    if len(score) < 3:
+                        continue
+
+                    print('>> Group: B, round: {} | {} ({}) {}'.format(round, player, score, opponent))
+                    try:
+                        player_sets, opponent_sets = score.split('x')
+                        relationship = 'win' if player_sets > opponent_sets else 'lose'
+                    except ValueError:
+                        score = score.replace('over', '')
+                        score = score.replace('ower', '')
+                        if score in ['walk+', 'walk-']:
+                            relationship = 'win' if score == 'walk+' else 'lose'
+                        else:
+                            print('Unknown score {} for players {} {}', score, player, opponent)
+                            continue
+                    query = """
+                            MATCH(n:Player {{name: '{}'}}), (m:Player {{name: '{}'}})
+                            CREATE UNIQUE(n)-[:{} {{score: '{}', group: 'B', round: '{}', year: {}}}]->(m)
+                        """.format(player, opponent, relationship, score, round, year)
+                    try:
+                        session.run(query)
+                        count += 1
+                    except ConstraintError as e:
+                        print('Create relationship: ' + str(e))
+                except Exception as e:
+                    print("Unexpected error: {}, msg: {}".format(sys.exc_info()[0], str(e)))
+                    raise e
+        return count
 
 
 class MatrixParser:
@@ -16,14 +104,6 @@ class MatrixParser:
         'GRUPA ostatnia MARZEC': 'GRUPA 12 MARZEC',
         'Grupa ostatnia LUTY': 'GRUPA 12 LUTY',
         'Grupa ostatnia STYCZEN': 'GRUPA 13 STYCZEŃ',
-    }
-    PLAYER_FIXES = {
-        'Kowalski Piotr': 'Piotr Kowalski',
-        'Katarzyna Błach': 'Katarzyna Mazur',
-        'Nazarov Konstiantyn': 'Konstiantyn Nazarov',
-        'Wycisło Wojtek': 'Wojtek Wycisło',
-        'Lipiński Marek': 'Marek Lipiński',
-        'Ronkiewicz Łukasz': 'Łukasz Ronkiewicz',
     }
 
     def handles(self, name):
@@ -45,25 +125,9 @@ class MatrixParser:
 
             group, month = group_month.split()
             round = self.MONTHS.index(month)
+
         print('>> ' + sheet.name)
-        players = []
-        for row in range(2, sheet.nrows):
-            if sheet.cell(row, 0).value == '':
-                break
-            player = sheet.cell(row, 0).value
-            player = re.sub(r'[0-9\.\(\)\-]', ' ', player).strip()
-            player = ' '.join(player.split()[0:2])  # only 2 first words
-            player = player if player not in self.PLAYER_FIXES else self.PLAYER_FIXES[player]
-            if ' ' in player:
-                player = player.split()[1]
-
-            player = player[0].upper() + player[1:]
-            players.append((row, player))
-
-            try:
-                session.run("CREATE({}:Player {{name: '{}'}})".format(player.replace(' ', ''), player))
-            except ConstraintError:
-                pass
+        players = PlayersFetcher.fetch_players(session, sheet)
 
         for row, player in players:
             for col in range(1, len(players) + 1):
@@ -100,7 +164,7 @@ class MatrixParser:
 
 
 class Runner:
-    parsers = [MatrixParser()]
+    parsers = [MatrixParser(), FlatParser()]
     sheets = []
     driver = None
 
@@ -116,7 +180,7 @@ class Runner:
 
     def run(self, year):
         count = 0
-        for sheet in sheets:
+        for sheet in self.sheets:
             for parser in self.parsers:
                 if parser.handles(sheet.name.lower()):
                     session = self.driver.session()
@@ -129,5 +193,5 @@ class Runner:
 
 
 runner = Runner(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else None)
-count = runner.run(2017 if '2017' in sys.argv[1] else 2016)
-print('>> created {} relationships'.format(count))
+total = runner.run(2017 if '2017' in sys.argv[1] else 2016)
+print('>> created {} relationships'.format(total))
