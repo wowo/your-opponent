@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import re
+import os
 import sys
 import xlrd
 from neo4j.v1 import GraphDatabase, basic_auth
@@ -50,12 +51,13 @@ class PlayersFetcher:
 class FlatParser:
     MAX_MATCHES = 17
 
-    def handles(self, name):
+    @staticmethod
+    def handles(name):
         return 'dywizja b' in name
 
     def parse(self, year, sheet, session):
         count = 0
-        round = sheet.name.replace('.', '').split()[1]
+        round_no = sheet.name.replace('.', '').split()[1]
 
         print('>> ' + sheet.name)
         players = PlayersFetcher.fetch_players(session, sheet, offset=1, start=4)
@@ -71,7 +73,7 @@ class FlatParser:
                     if len(score) < 3:
                         continue
 
-                    print('>> Group: B, round: {} | {} ({}) {}'.format(round, player, score, opponent))
+                    print('>> Group: B, round: {} | {} ({}) {}'.format(round_no, player, score, opponent))
                     try:
                         player_sets, opponent_sets = score.split('x')
                         relationship = 'win' if player_sets > opponent_sets else 'lose'
@@ -86,7 +88,7 @@ class FlatParser:
                     query = """
                             MATCH(n:Player {{name: '{}'}}), (m:Player {{name: '{}'}})
                             CREATE UNIQUE(n)-[:{} {{score: '{}', group: 'B', round: '{}', year: {}}}]->(m)
-                        """.format(player, opponent, relationship, score, round, year)
+                        """.format(player, opponent, relationship, score, round_no, year)
                     try:
                         session.run(query)
                         count += 1
@@ -107,25 +109,32 @@ class MatrixParser:
         'Grupa ostatnia STYCZEN': 'GRUPA 13 STYCZEŃ',
     }
 
-    def handles(self, name):
+    @staticmethod
+    def handles(name: str):
         if 'wolna' in name:
             return False
-        return 'grupa' in name or ('masters' in name and 0 == name.index('masters')) or 'dywizja a' in name
+        return 'grupa' in name or name.startswith('masters') or 'dywizja a' in name\
+            or re.match(r'[a-zżźćńółęąś]+[0-9]+', name)
 
     def parse(self, year, sheet, session):
         count = 0
         if 'dywizja' in sheet.name.lower():
-            round = sheet.name.split()[1]
+            round_no = sheet.name.split()[1]
             group = 'A'
         else:
             sheet_name = sheet.name if sheet.name not in self.SHEET_NAME_FIXES else self.SHEET_NAME_FIXES[sheet.name]
             group_month = sheet_name.lower().replace('grupa', '').strip()
             print(group_month)
-            if len(group_month.split()) == 1:
-                group_month += ' luty' if sheet_name.lower() == 'masters' else ' styczeń'
 
-            group, month = group_month.split()
-            round = self.MONTHS.index(month)
+            match = re.match(r'([a-zżźćńółęąś]+) ?([0-9]+)', group_month)
+            if match:
+                month, group = match.groups()
+            else:
+                if len(group_month.split()) == 1:
+                    group_month += ' luty' if sheet_name.lower() == 'masters' else ' styczeń'
+                group, month = group_month.split()
+
+            round_no = self.MONTHS.index(month)
 
         print('>> ' + sheet.name)
         players = PlayersFetcher.fetch_players(session, sheet)
@@ -138,7 +147,7 @@ class MatrixParser:
                         continue
 
                     opponent = players[col - 1][1]
-                    print('>> Group: {}, round: {} | {} ({}) {}'.format(group, round, player, score, opponent))
+                    print('>> Group: {}, round: {} | {} ({}) {}'.format(group, round_no, player, score, opponent))
                     try:
                         player_sets, opponent_sets = score.split('x')
                         relationship = 'win' if player_sets > opponent_sets else 'lose'
@@ -151,7 +160,7 @@ class MatrixParser:
                     query = """
                             MATCH(n:Player {{name: '{}'}}), (m:Player {{name: '{}'}})
                             CREATE UNIQUE(n)-[:{} {{score: '{}', group: '{}', round: '{}', year: {}}}]->(m)
-                        """.format(player, opponent, relationship, score, group, round, year)
+                        """.format(player, opponent, relationship, score, group, round_no, year)
                     try:
                         session.run(query)
                         count += 1
@@ -172,8 +181,13 @@ class Runner:
     def __init__(self, path, custom_sheet=None, clean=False):
         workbook = xlrd.open_workbook(path)
         self.sheets = workbook.sheets() if (not custom_sheet or len(custom_sheet) == 0) \
-            else [workbook.sheet_by_name(custom_sheet)]
-        self.driver = GraphDatabase.driver('bolt://localhost:7687', auth=basic_auth('neo4j', 'Welcome01'))
+            else self.get_sheets(workbook, custom_sheet)
+
+        host = 'bolt://localhost:7687' if 'NEO_HOST' not in os.environ else os.environ['NEO_HOST']
+        user = 'neo4j' if 'NEO_USER' not in os.environ else os.environ['NEO_USER']
+        password = '' if 'NEO_PASS' not in os.environ else os.environ['NEO_PASS']
+
+        self.driver = GraphDatabase.driver(host, auth=basic_auth(user, password))
         session = self.driver.session()
         if clean:
             session.run('MATCH (n) DETACH DELETE n')
@@ -192,6 +206,14 @@ class Runner:
                     except ConstraintError as e:
                         print('Session close: ' + str(e))
         return count
+
+    @staticmethod
+    def get_sheets(workbook, custom_sheet):
+        if '*' not in custom_sheet:
+            return [workbook.sheet_by_name(custom_sheet)]
+        else:
+            pattern = custom_sheet.replace('*', '')
+            return filter(lambda sheet: pattern.lower() in sheet.name.lower(), workbook.sheets())
 
 
 runner = Runner(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else None, sys.argv[3] if len(sys.argv) > 3 else False)
