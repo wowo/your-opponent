@@ -17,6 +17,9 @@ class PlayersFetcher:
         'Ronkiewicz Łukasz': 'Łukasz Ronkiewicz',
         'Damian Pierikarz': 'Damian Piernikarz',
         'Jacek Godyn': 'Jacek Godyń',
+        'Mróz Marzena': 'Marzena Mróz',
+        'Szopa Michał': 'Michał Szopa',
+        'Bodzyński Robert': 'Robert Bodzyński',
     }
 
     @staticmethod
@@ -107,6 +110,20 @@ class MatrixParser:
         'GRUPA ostatnia MARZEC': 'GRUPA 12 MARZEC',
         'Grupa ostatnia LUTY': 'GRUPA 12 LUTY',
         'Grupa ostatnia STYCZEN': 'GRUPA 13 STYCZEŃ',
+        'WRZESIEŃ OSTATNIA': 'GRUPA 14 WRZESIEŃ',
+        'LISTOPAD OSTATNIA': 'GRUPA 14 LISTOPAD',
+        'GRUDZIEŃ OSTATNIAA': 'GRUPA 14 GRUDZIEŃ',
+        'GRUDZIEN4': 'GRUDZIEŃ4',
+        'GRUDZIEN5': 'GRUDZIEŃ5',
+        'GRUDZIEN6': 'GRUDZIEŃ6',
+        'GRUDZIEN7': 'GRUDZIEŃ7',
+        'GRUDZIEN8': 'GRUDZIEŃ8',
+        'GRUDZIEN9': 'GRUDZIEŃ9',
+        'GRUDZIEN10': 'GRUDZIEŃ10',
+        'GRUDZIEN11': 'GRUDZIEŃ11',
+        'GRUDZIEN12': 'GRUDZIEŃ12',
+        'GRUDZIEN13': 'GRUDZIEŃ13',
+        'MASTERS GRUDZIEN': 'MASTERS GRUDZIEŃ',
     }
 
     @staticmethod
@@ -124,7 +141,6 @@ class MatrixParser:
         else:
             sheet_name = sheet.name if sheet.name not in self.SHEET_NAME_FIXES else self.SHEET_NAME_FIXES[sheet.name]
             group_month = sheet_name.lower().replace('grupa', '').strip()
-            print(group_month)
 
             match = re.match(r'([a-zżźćńółęąś]+) ?([0-9]+)', group_month)
             if match:
